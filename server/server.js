@@ -1,25 +1,24 @@
+// server/server.js
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const RoomManager = require('./roomManager');
-const GameManager = require('./gameManager'); // 追加: ゲーム進行管理
+const GameManager = require('./gameManager'); 
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// 静的ファイル（publicフォルダ）の配信
 app.use(express.static('public'));
 
 const roomManager = new RoomManager();
-const activeGames = new Map(); // 追加: 進行中のゲームを保存するマップ
+const activeGames = new Map(); 
 
 wss.on('connection', (ws) => {
     ws.id = generateUniqueId();
     ws.isAlive = true;
     console.log(`Player connected: ${ws.id}`);
 
-    // クライアントからのメッセージ処理
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
@@ -33,10 +32,10 @@ wss.on('connection', (ws) => {
         console.log(`Player disconnected: ${ws.id}`);
         const roomId = roomManager.playerRoomMap.get(ws.id);
         
-        // 部屋からの退出・切断処理
+        // スマホは画面がスリープしただけで頻繁に切断されるため、
+        // 部屋からは即座に退出させず、猶予を持たせる処理をroomManagerに委譲します
         roomManager.handleDisconnect(ws.id);
         
-        // もし部屋に誰もいなくなって消滅していたら、ゲームデータも消去する
         if (roomId && !roomManager.rooms.has(roomId)) {
             activeGames.delete(roomId);
         }
@@ -45,7 +44,6 @@ wss.on('connection', (ws) => {
     ws.on('pong', () => { ws.isAlive = true; });
 });
 
-// クライアントからのリクエストを各モジュールに振り分ける
 function handleClientRequest(ws, data) {
     const { type, requestID, payload } = data;
     
@@ -69,10 +67,15 @@ function handleClientRequest(ws, data) {
                 roomManager.setReady(ws, payload.isReady);
                 sendResponse(ws, type, requestID, 'success', {});
                 break;
+            // ==========================================
+            // 【追加】能力カードをサーバーに保存・装備する
+            // ==========================================
+            case 'EQUIP_CARD':
+                roomManager.equipCard(ws.id, payload.card);
+                sendResponse(ws, type, requestID, 'success', {});
+                break;
             case 'START_GAME':
-                // ホストがゲームを開始した時の処理
                 const startedRoom = roomManager.startGame(ws);
-                // GameManagerを初期化し、麻雀エンジンを起動する！
                 const gm = new GameManager(startedRoom, roomManager);
                 activeGames.set(startedRoom.id, gm);
                 sendResponse(ws, type, requestID, 'success', {});
@@ -82,7 +85,6 @@ function handleClientRequest(ws, data) {
                 sendResponse(ws, type, requestID, 'success', {});
                 break;
             case 'ACTION':
-                // ゲーム中のアクション（打牌、鳴きなど）をGameManagerに流す
                 const roomId = roomManager.playerRoomMap.get(ws.id);
                 if (roomId && activeGames.has(roomId)) {
                     activeGames.get(roomId).handleAction(ws.id, payload.actionType, payload.payload);
@@ -95,7 +97,6 @@ function handleClientRequest(ws, data) {
         }
     } catch (error) {
         console.error(`Error handling ${type}:`, error.message);
-        // エラー時はクライアントに失敗を伝える
         sendResponse(ws, type, requestID, 'error', { message: error.message });
     }
 }
@@ -110,14 +111,14 @@ function generateUniqueId() {
     return Math.random().toString(36).substr(2, 9);
 }
 
-// 接続維持確認 (Ping/Pong)
+// スマホ対応：Ping間隔を少し短くし（20秒）、スリープからの復帰を早く検知する
 setInterval(() => {
     wss.clients.forEach((ws) => {
         if (!ws.isAlive) return ws.terminate();
         ws.isAlive = false;
         ws.ping();
     });
-}, 30000);
+}, 20000);
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {

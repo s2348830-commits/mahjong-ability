@@ -32,10 +32,10 @@ class GameManager {
             score: 25000,
             seat: index, // 0:東, 1:南, 2:西, 3:北
             hand: [],
-            melds: [], // 副露（ポン、チー、カン）
+            melds: [], 
             discards: [],
             isRiichi: false,
-            cards: [] // プレイヤーが装備している能力カード（今回は空）
+            cards: p.equippedCards || [] // 【変更】装備した能力カードを引き継ぐ！
         }));
 
         this.startRound();
