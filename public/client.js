@@ -10,7 +10,7 @@
         const ui = new window.UIManager();
         const renderer = new window.MahjongRenderer('game-canvas');
         
-        // UI操作が必要な部分はロビーマネージャー等にUI参照を渡す（必要に応じて）
+        // UI操作が必要な部分はロビーマネージャー等にUI参照を渡す
         const lobby = window.LobbyManager ? new window.LobbyManager(network) : null;
         
         // カードエディタの初期化 (DOM構築とイベントバインド)
@@ -24,9 +24,7 @@
         network.connect();
 
         // 3. サーバーからのイベントハンドリング（イベント駆動）
-        
-        // 部屋の状態が更新されたとき（入退室、準備完了など）
-        network.callbacks = network.callbacks || new Map(); // 安全のための初期化確認
+        network.callbacks = network.callbacks || new Map();
         
         const originalHandleMessage = network.handleMessage.bind(network);
         network.handleMessage = (data) => {
@@ -44,7 +42,7 @@
                 
                 // 自分のIDが未取得なら gameState から取得を試みる
                 if (!myPlayerId && lobby) {
-                    myPlayerId = lobby.myId; // lobby側でログイン時に保持しているID
+                    myPlayerId = lobby.myId; 
                 }
 
                 // 画面をゲームビューに切り替え
@@ -70,7 +68,6 @@
             if (data.type === 'EVENT_GAME_ANNOUNCEMENT') {
                 const eventData = data.payload;
                 console.log("Game Announcement:", eventData);
-                // TODO: 画面上に「ロン！」「カード発動！」などのエフェクトを描画する
                 if (eventData.type === 'RON') {
                     alert(`ロン！ プレイヤー ${eventData.playerId} があがりました！`);
                 }
@@ -108,8 +105,19 @@
             });
         }
 
+        // ==========================================
+        // 【追加】能力カード保存イベントの受け取りと送信
+        // ==========================================
+        window.addEventListener('saveCardRequest', (e) => {
+            const cardData = e.detail;
+            console.log("Sending card to server:", cardData);
+            // サーバーのEQUIP_CARDエンドポイントへ送信
+            network.sendRequest('EQUIP_CARD', { card: cardData })
+                .then(() => console.log('Card successfully equipped on server.'))
+                .catch(err => console.error('Failed to equip card:', err));
+        });
+
         // --- 以下、サーバーへの初期接続時のモックログイン処理 ---
-        // 実際の運用では認証システム（JWTやSession）と連携します
         setTimeout(() => {
             network.sendRequest('LOGIN', { name: "Player_" + Math.floor(Math.random()*1000) })
                 .then(res => {

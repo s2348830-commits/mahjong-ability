@@ -5,107 +5,51 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>能力カード麻雀 (Mahjong Ability)</title>
     
+    <link rel="stylesheet" href="style.css">
+
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mobile-drag-drop@2.3.0-rc.2/default.css">
     <script src="https://cdn.jsdelivr.net/npm/mobile-drag-drop@2.3.0-rc.2/index.min.js"></script>
-
-    <style>
-        /* ---------------- スマホ対応 CSS ---------------- */
-        body { margin: 0; font-family: sans-serif; background: #1a1a1a; color: #fff; touch-action: manipulation; }
-        .view { display: none; padding: 10px; }
-        .active { display: block; }
-        
-        /* ボタンをスマホの指で押しやすいサイズ（最低44px）に拡大 */
-        button { 
-            padding: 12px 16px; 
-            margin: 5px 2px; 
-            cursor: pointer; 
-            background: #3498db; 
-            color: #fff; 
-            border: none; 
-            border-radius: 8px; 
-            font-size: 16px;
-            font-weight: bold;
-            min-height: 44px; 
-        }
-        button:disabled { background: #555; cursor: not-allowed; }
-        
-        /* 部屋リストなどの余白調整 */
-        ul { list-style: none; padding: 0; margin: 0; }
-        li { background: #333; margin: 8px 0; padding: 15px 10px; display: flex; justify-content: space-between; align-items: center; border-radius: 8px; }
-
-        /* 麻雀卓（キャンバス）を画面幅に合わせて自動縮小させる */
-        #game-container { width: 100%; max-width: 800px; margin: 0 auto; text-align: center; position: relative; }
-        canvas { 
-            width: 100%; 
-            height: auto; 
-            aspect-ratio: 16 / 9; /* 16:9の比率を維持 */
-            border: 2px solid #333; 
-            background: #1a4f2c; 
-            box-sizing: border-box;
-        }
-
-        /* エディタ画面のスマホ対応レイアウト */
-        #card-editor-modal { 
-            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; 
-            background: rgba(0,0,0,0.95); padding: 10px; z-index: 100; overflow-y: auto; 
-        }
-        
-        /* エディタ内のJSで生成されるインラインスタイルを上書きして縦並びにする */
-        .editor-layout { flex-direction: column !important; gap: 10px !important; }
-        .block-library { width: 100% !important; min-height: auto !important; padding: 10px; box-sizing: border-box; }
-        .workspace { padding: 10px !important; }
-        .drop-slot { min-height: 60px !important; } /* ドロップしやすいように枠を少し広げる */
-
-        /* 画面が横向き(PCなど)の場合は横並びに戻す */
-        @media (min-width: 600px) {
-            .view { padding: 20px; }
-            .editor-layout { flex-direction: row !important; }
-            .block-library { width: 200px !important; min-height: 400px !important; }
-            #card-editor-modal { top: 5%; left: 5%; right: 5%; bottom: 5%; border: 1px solid #fff; border-radius: 8px; }
-        }
-    </style>
 </head>
 <body>
 
     <div id="lobby-view" class="view active">
-        <h1 style="font-size: 20px;">ロビー</h1>
-        <button id="btn-refresh-lobby">更新</button>
-        <button id="btn-create-room">部屋を作成</button>
-        <button id="btn-open-editor" style="background:#8e44ad; width: 100%; margin-top: 10px;">能力カード作成ツールを開く</button>
+        <h1>ロビー</h1>
+        <div style="display: flex; gap: 10px;">
+            <button id="btn-refresh-lobby" style="flex: 1;">更新</button>
+            <button id="btn-create-room" style="flex: 2;">部屋を作成</button>
+        </div>
+        <button id="btn-open-editor">能力カード作成ツールを開く</button>
         
-        <ul id="lobby-room-list" style="margin-top: 15px;"></ul>
+        <ul id="lobby-room-list"></ul>
 
         <div id="card-editor-modal">
-            <button id="btn-close-editor" style="float:right; background:#e74c3c;">閉じる</button>
-            <h2 style="margin: 0 0 10px 0; font-size: 18px;">能力カード作成</h2>
+            <button id="btn-close-editor" style="float:right;">閉じる</button>
+            <h2>能力カード作成</h2>
             <div id="card-editor-container"></div>
         </div>
     </div>
 
     <div id="room-view" class="view">
-        <h1 id="room-title" style="font-size: 20px;">部屋</h1>
+        <h1 id="room-title">部屋</h1>
         <ul id="room-player-list"></ul>
-        <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 10px;">
-            <button id="btn-ready" style="width: 100%;">準備完了</button>
-            <button id="btn-start-game" style="display:none; background:#27ae60; width: 100%;">ゲーム開始</button>
-            <button id="btn-leave-room" style="background:#e74c3c; width: 100%;">退出</button>
+        <div style="display: flex; flex-direction: column; margin-top: 15px;">
+            <button id="btn-ready">準備完了 / 取消</button>
+            <button id="btn-start-game" style="display:none;">ゲーム開始</button>
+            <button id="btn-leave-room">退出</button>
         </div>
     </div>
 
     <div id="game-view" class="view">
         <div id="game-container">
             <canvas id="game-canvas" width="800" height="450"></canvas>
-            <div style="margin-top: 10px;">
-                <button id="btn-skip-action" style="display:none; background:#f39c12; width: 100%; padding: 15px; font-size: 18px;">スキップ (パス)</button>
+            <div style="margin-top: 15px;">
+                <button id="btn-skip-action" style="display:none;">スキップ (パス)</button>
             </div>
         </div>
     </div>
 
     <script>
-        MobileDragDrop.polyfill({
-            dragImageTranslateOverride: MobileDragDrop.scrollBehaviourDragImageTranslateOverride
-        });
-        // スクロール時にドラッグがキャンセルされないようにするための設定
+        MobileDragDrop.polyfill({ dragImageTranslateOverride: MobileDragDrop.scrollBehaviourDragImageTranslateOverride });
         window.addEventListener('touchmove', function() {}, {passive: false});
     </script>
 

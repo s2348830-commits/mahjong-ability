@@ -30,9 +30,6 @@
             }
         }
 
-        /**
-         * 指定したビューのみを表示する
-         */
         switchView(viewName) {
             Object.values(this.views).forEach(el => {
                 if (el) el.classList.remove('active');
@@ -42,9 +39,6 @@
             }
         }
 
-        /**
-         * 鳴きやカード待機時のスキップボタンの表示制御
-         */
         toggleSkipButton(show, callback) {
             if (!this.btnSkip) return;
             this.btnSkip.style.display = show ? 'inline-block' : 'none';
@@ -57,20 +51,31 @@
         }
 
         /**
-         * キャンバス上のクリック座標から、自分の手牌のインデックスを計算する
-         * （mahjongRenderer.js の描画ロジックと同期している必要があります）
+         * キャンバス上のクリック/タップ座標から、自分の手牌のインデックスを計算する
+         * （スマホのタップ反応を高速化）
          */
         bindCanvasClick(canvas, myHandLength, callback) {
-            canvas.addEventListener('click', (event) => {
+            const handleInput = (event) => {
+                event.preventDefault(); // タップ時のズームやスクロールなどの誤作動を防止
+
                 const rect = canvas.getBoundingClientRect();
                 const scaleX = canvas.width / rect.width;
                 const scaleY = canvas.height / rect.height;
                 
-                const x = (event.clientX - rect.left) * scaleX;
-                const y = (event.clientY - rect.top) * scaleY;
+                // PCのマウスクリックか、スマホのタッチかで座標の取り方を変える
+                let clientX, clientY;
+                if (event.type === 'touchstart') {
+                    clientX = event.changedTouches[0].clientX;
+                    clientY = event.changedTouches[0].clientY;
+                } else {
+                    clientX = event.clientX;
+                    clientY = event.clientY;
+                }
+
+                const x = (clientX - rect.left) * scaleX;
+                const y = (clientY - rect.top) * scaleY;
 
                 // 描画ロジックに基づく自分の手牌の当たり判定エリア計算
-                // renderer では translate(w/2, h/2) して描画しているので元に戻して計算
                 const cx = canvas.width / 2;
                 const cy = canvas.height / 2;
                 const bottomY = cy + (canvas.height / 2 - 20) - 45; // tileHeight = 45
@@ -86,7 +91,11 @@
                         callback(tileIndex);
                     }
                 }
-            });
+            };
+
+            // クリックとタッチの両方に対応させる
+            canvas.addEventListener('click', handleInput);
+            canvas.addEventListener('touchstart', handleInput, { passive: false });
         }
     }
 
