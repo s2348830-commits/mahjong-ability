@@ -5,15 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>能力カード麻雀 (Mahjong Ability)</title>
     <style>
-        /* 簡易 style.css の内容をインラインで代用（ファイル数を節約するため基本レイアウトのみ） */
         body { margin: 0; font-family: sans-serif; background: #1a1a1a; color: #fff; }
         .view { display: none; padding: 20px; }
         .active { display: block; }
-        button { padding: 8px 16px; cursor: pointer; background: #3498db; color: #fff; border: none; border-radius: 4px; }
+        /* ボタンを見やすく少し調整しました */
+        button { padding: 8px 16px; margin: 5px 2px; cursor: pointer; background: #3498db; color: #fff; border: none; border-radius: 4px; }
         button:disabled { background: #555; cursor: not-allowed; }
         #game-container { text-align: center; position: relative; }
         canvas { border: 2px solid #333; background: #1a4f2c; max-width: 100%; }
-        #card-editor-modal { display: none; position: absolute; top: 10%; left: 10%; right: 10%; background: rgba(0,0,0,0.9); padding: 20px; border: 1px solid #fff; z-index: 100; }
+        /* エディタ画面がスマホや小さい画面でもはみ出さないようにスクロールを追加 */
+        #card-editor-modal { display: none; position: absolute; top: 5%; left: 5%; right: 5%; bottom: 5%; background: rgba(0,0,0,0.95); padding: 20px; border: 1px solid #fff; z-index: 100; overflow-y: auto; }
         ul { list-style: none; padding: 0; }
         li { background: #333; margin: 5px 0; padding: 10px; display: flex; justify-content: space-between; }
     </style>
@@ -24,7 +25,14 @@
         <h1>ロビー</h1>
         <button id="btn-refresh-lobby">更新</button>
         <button id="btn-create-room">部屋を作成</button>
+        <button id="btn-open-editor" style="background:#8e44ad;">能力カード作成ツールを開く</button>
+        
         <ul id="lobby-room-list"></ul>
+
+        <div id="card-editor-modal">
+            <button id="btn-close-editor" style="float:right; background:#e74c3c;">閉じる</button>
+            <div id="card-editor-container"></div>
+        </div>
     </div>
 
     <div id="room-view" class="view">
@@ -40,12 +48,6 @@
             <canvas id="game-canvas" width="800" height="450"></canvas>
             <div style="margin-top: 10px;">
                 <button id="btn-skip-action" style="display:none; background:#f39c12;">スキップ (パス)</button>
-                <button id="btn-open-editor">能力カード作成ツールを開く</button>
-            </div>
-            
-            <div id="card-editor-modal">
-                <button id="btn-close-editor" style="float:right; background:#e74c3c;">閉じる</button>
-                <div id="card-editor-container"></div>
             </div>
         </div>
     </div>
