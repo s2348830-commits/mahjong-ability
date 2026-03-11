@@ -1,3 +1,4 @@
+// public/network.js (修正版)
 (function(global) {
     'use strict';
 
@@ -7,6 +8,7 @@
             this.messageQueue = [];
             this.requestCounter = 0;
             this.callbacks = new Map(); // requestIDに紐づくコールバック
+            this.eventListeners = new Map(); // 追加: サーバーイベントのリッスン用
         }
 
         connect() {
@@ -46,8 +48,13 @@
             });
         }
 
+        // 追加: イベントリスナーを登録するメソッド
+        onEvent(eventType, callback) {
+            this.eventListeners.set(eventType, callback);
+        }
+
         handleMessage(data) {
-            // ACK/Responseの処理
+            // ACK/Responseの処理 (自分が送ったリクエストへの返事)
             if (data.requestID && this.callbacks.has(data.requestID)) {
                 const callback = this.callbacks.get(data.requestID);
                 if (data.status === 'success') {
@@ -60,9 +67,16 @@
             }
 
             // サーバーからのイベント（状態更新など）の処理
-            if (data.eventID) {
-                // TODO: SyncManagerへの連携、イベント処理、そしてACKをサーバーに返す
-                this.socket.send(JSON.stringify({ type: 'EVENT_ACK', eventID: data.eventID }));
+            if (data.type && data.type.startsWith('EVENT_')) {
+                // ACKを返す（サーバー側に受け取ったことを伝える）
+                if (data.eventID) {
+                    this.socket.send(JSON.stringify({ type: 'EVENT_ACK', eventID: data.eventID }));
+                }
+
+                // 登録されたコールバック（lobby.jsやclient.js）にデータを渡す
+                if (this.eventListeners.has(data.type)) {
+                    this.eventListeners.get(data.type)(data.payload);
+                }
             }
         }
 
@@ -74,7 +88,6 @@
         }
     }
 
-    // グローバルオブジェクト（window）に安全にアタッチ
     global.NetworkManager = NetworkManager;
 
 })(typeof window !== 'undefined' ? window : this);
