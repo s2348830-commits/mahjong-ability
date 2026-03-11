@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>能力カード麻雀 (Mahjong Ability)</title>
+    <style>
+        /* 簡易 style.css の内容をインラインで代用（ファイル数を節約するため基本レイアウトのみ） */
+        body { margin: 0; font-family: sans-serif; background: #1a1a1a; color: #fff; }
+        .view { display: none; padding: 20px; }
+        .active { display: block; }
+        button { padding: 8px 16px; cursor: pointer; background: #3498db; color: #fff; border: none; border-radius: 4px; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        #game-container { text-align: center; position: relative; }
+        canvas { border: 2px solid #333; background: #1a4f2c; max-width: 100%; }
+        #card-editor-modal { display: none; position: absolute; top: 10%; left: 10%; right: 10%; background: rgba(0,0,0,0.9); padding: 20px; border: 1px solid #fff; z-index: 100; }
+        ul { list-style: none; padding: 0; }
+        li { background: #333; margin: 5px 0; padding: 10px; display: flex; justify-content: space-between; }
+    </style>
+</head>
+<body>
+
+    <div id="lobby-view" class="view active">
+        <h1>ロビー</h1>
+        <button id="btn-refresh-lobby">更新</button>
+        <button id="btn-create-room">部屋を作成</button>
+        <ul id="lobby-room-list"></ul>
+    </div>
+
+    <div id="room-view" class="view">
+        <h1 id="room-title">部屋</h1>
+        <ul id="room-player-list"></ul>
+        <button id="btn-ready">準備完了</button>
+        <button id="btn-start-game" style="display:none; background:#27ae60;">ゲーム開始</button>
+        <button id="btn-leave-room" style="background:#e74c3c;">退出</button>
+    </div>
+
+    <div id="game-view" class="view">
+        <div id="game-container">
+            <canvas id="game-canvas" width="800" height="450"></canvas>
+            <div style="margin-top: 10px;">
+                <button id="btn-skip-action" style="display:none; background:#f39c12;">スキップ (パス)</button>
+                <button id="btn-open-editor">能力カード作成ツールを開く</button>
+            </div>
+            
+            <div id="card-editor-modal">
+                <button id="btn-close-editor" style="float:right; background:#e74c3c;">閉じる</button>
+                <div id="card-editor-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="utils.js"></script>
+    <script src="network.js"></script>
+    <script src="mahjongRenderer.js"></script>
+    <script src="cardEditor.js"></script>
+    <script src="ui.js"></script>
+    <script src="lobby.js"></script>
+    <script src="room.js"></script>
+    <script src="client.js"></script>
+</body>
+</html>
