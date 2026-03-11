@@ -1,134 +1,144 @@
-// public/client.js
-(function() {
-    'use strict';
+/**
+ * public/client.js
+ * クライアント全体のエントリーポイント。
+ * 通信、UI、描画、エディタの各モジュールを統合・管理する。
+ */
 
-    document.addEventListener('DOMContentLoaded', () => {
-        console.log("Initializing Mahjong Ability Client...");
+// 各モジュールは既にグローバル(window)に登録されている、
+// もしくはES6形式でエクスポートされていることを前提としています。
 
-        // 1. 各モジュールのインスタンス化
-        const network = new window.NetworkManager();
-        const ui = new window.UIManager();
-        const renderer = new window.MahjongRenderer('game-canvas');
+export class ClientApp {
+    constructor() {
+        // 各モジュールのインスタンス化
+        this.network = new window.Network();
+        this.ui = new window.UIManager();
+        this.renderer = new window.MahjongRenderer('game-canvas');
+        this.cardEditor = new window.CardEditor();
         
-        // UI操作が必要な部分はロビーマネージャー等にUI参照を渡す
-        const lobby = window.LobbyManager ? new window.LobbyManager(network) : null;
+        // ロビー・部屋管理の統合 (ui.jsやlobby.jsと連携)
+        this.lobby = window.LobbyManager ? new window.LobbyManager(this.network) : null;
         
-        // カードエディタの初期化 (DOM構築とイベントバインド)
-        const cardEditor = window.CardEditor ? new window.CardEditor() : null;
+        this.myId = null;
+        this.gameState = null;
+    }
 
-        // グローバルな状態管理
-        let myPlayerId = null;
-        let currentGameState = null;
-
-        // 2. サーバーへの接続
-        network.connect();
-
-        // 3. サーバーからのイベントハンドリング（イベント駆動）
-        network.callbacks = network.callbacks || new Map();
+    /**
+     * アプリケーションの起動
+     */
+    start() {
+        console.log('[ClientApp] Starting application...');
         
-        const originalHandleMessage = network.handleMessage.bind(network);
-        network.handleMessage = (data) => {
-            originalHandleMessage(data);
+        // イベント購読の登録
+        this.registerNetworkEvents();
+        this.registerUIEvents();
+        
+        // WebSocket接続開始
+        this.network.connect();
+    }
 
-            if (data.type === 'EVENT_ROOM_STATE_SYNC') {
-                if (lobby && lobby.updateRoomUI) {
-                    lobby.updateRoomUI(data.payload);
-                }
-            }
-
-            // ゲーム状態の更新を受信したとき（毎ターン、打牌ごと）
-            if (data.type === 'EVENT_GAME_STATE_UPDATE') {
-                currentGameState = data.payload;
-                
-                // 自分のIDが未取得なら gameState から取得を試みる
-                if (!myPlayerId && lobby) {
-                    myPlayerId = lobby.myId; 
-                }
-
-                // 画面をゲームビューに切り替え
-                ui.switchView('game');
-                
-                // 描画エンジンに最新状態を渡して再描画
-                renderer.render(currentGameState, myPlayerId);
-
-                // レースコンディション対策：WAIT_ACTION（鳴き・カード待機フェーズ）のUI処理
-                if (currentGameState.status === 'WAIT_ACTION') {
-                    ui.toggleSkipButton(true, () => {
-                        network.sendRequest('ACTION', { actionType: 'SKIP' });
-                    });
-                } else {
-                    ui.toggleSkipButton(false);
-                }
-
-                // 手牌のクリックイベント（打牌）の再バインド
-                bindDiscardEvent(currentGameState);
-            }
-
-            // ゲーム内のアナウンス（ロン、ポン、カード発動など）
-            if (data.type === 'EVENT_GAME_ANNOUNCEMENT') {
-                const eventData = data.payload;
-                console.log("Game Announcement:", eventData);
-                if (eventData.type === 'RON') {
-                    alert(`ロン！ プレイヤー ${eventData.playerId} があがりました！`);
-                }
-            }
-        };
-
-        // 4. キャンバスのクリック（打牌アクション）の処理
-        function bindDiscardEvent(gameState) {
-            const canvas = document.getElementById('game-canvas');
-            if (!canvas) return;
-
-            // 既存のイベントリスナーを破棄するためにクローンして置換するハック（簡易的）
-            const newCanvas = canvas.cloneNode(true);
-            canvas.parentNode.replaceChild(newCanvas, canvas);
-            
-            // Rendererのコンテキストを取り直す
-            renderer.canvas = newCanvas;
-            renderer.ctx = newCanvas.getContext('2d');
-
-            const me = gameState.players.find(p => p.id === myPlayerId);
-            if (!me) return;
-
-            ui.bindCanvasClick(newCanvas, me.hand.length, (tileIndex) => {
-                // 自分のターンで、かつプレイ中の場合のみ打牌可能
-                if (gameState.status === 'PLAYING' && gameState.currentTurn === myPlayerId) {
-                    const tileToDiscard = me.hand[tileIndex];
-                    if (tileToDiscard) {
-                        console.log("Discarding:", tileToDiscard);
-                        network.sendRequest('ACTION', { 
-                            actionType: 'DISCARD', 
-                            payload: { tile: tileToDiscard } 
-                        });
-                    }
-                }
-            });
-        }
-
-        // ==========================================
-        // 【追加】能力カード保存イベントの受け取りと送信
-        // ==========================================
-        window.addEventListener('saveCardRequest', (e) => {
-            const cardData = e.detail;
-            console.log("Sending card to server:", cardData);
-            // サーバーのEQUIP_CARDエンドポイントへ送信
-            network.sendRequest('EQUIP_CARD', { card: cardData })
-                .then(() => console.log('Card successfully equipped on server.'))
-                .catch(err => console.error('Failed to equip card:', err));
+    /**
+     * サーバーからのネットワークイベントを登録
+     */
+    registerNetworkEvents() {
+        // 接続完了時
+        this.network.on('connected', () => {
+            console.log('[ClientApp] Connected to server. Logging in...');
+            // 初期ログイン処理
+            const tempName = `Player_${Math.floor(Math.random() * 1000)}`;
+            this.network.send('LOGIN', { name: tempName });
         });
 
-        // --- 以下、サーバーへの初期接続時のモックログイン処理 ---
-        setTimeout(() => {
-            network.sendRequest('LOGIN', { name: "Player_" + Math.floor(Math.random()*1000) })
-                .then(res => {
-                    myPlayerId = res.myId;
-                    if(lobby) lobby.myId = myPlayerId;
-                    console.log("Logged in as:", myPlayerId);
-                    // ロビー画面の更新
-                    if(lobby) lobby.fetchRooms();
-                })
-                .catch(err => console.error("Login failed", err));
-        }, 500); // 接続完了を少し待つ
-    });
+        // ログイン成功時
+        this.network.on('LOGIN_ACK', (data) => {
+            if (data) {
+                this.myId = data.myId;
+                if (this.lobby) this.lobby.myId = this.myId;
+                console.log(`[ClientApp] Logged in with ID: ${this.myId}`);
+                // 初期ロビー情報の取得
+                this.network.send('FETCH_ROOMS');
+            }
+        });
 
-})();
+        // 部屋情報の更新
+        this.network.on('EVENT_ROOM_STATE_SYNC', (roomData) => {
+            console.log('[ClientApp] Room updated:', roomData);
+            if (this.lobby) {
+                this.lobby.updateRoomUI(roomData);
+            }
+        });
+
+        // ゲーム状態の更新 (麻雀卓の描画)
+        this.network.on('EVENT_GAME_STATE_UPDATE', (state) => {
+            this.gameState = state;
+            this.ui.switchView('game');
+            this.renderer.render(state, this.myId);
+            
+            // 自分の手番なら牌のクリックを有効化
+            if (state.status === 'PLAYING' && state.currentTurn === this.myId) {
+                this.bindDiscardAction();
+            }
+
+            // 特殊アクション(鳴き・ロン)の待機状態ならスキップボタン表示
+            if (state.status === 'WAIT_ACTION') {
+                this.ui.toggleSkipButton(true, () => {
+                    this.network.send('ACTION', { actionType: 'SKIP' });
+                });
+            } else {
+                this.ui.toggleSkipButton(false);
+            }
+        });
+
+        // ゲーム内アナウンス (和了、カード発動など)
+        this.network.on('EVENT_GAME_ANNOUNCEMENT', (announcement) => {
+            console.log('[ClientApp] Announcement:', announcement);
+            if (announcement.type === 'WIN') {
+                alert(`和了！ ${announcement.winType}: ${announcement.playerId}`);
+            }
+        });
+    }
+
+    /**
+     * UIからの操作イベントを登録
+     */
+    registerUIEvents() {
+        // カードエディタからの保存リクエスト
+        window.addEventListener('saveCardRequest', (e) => {
+            const cardData = e.detail;
+            console.log('[ClientApp] Equipping card:', cardData);
+            this.network.send('EQUIP_CARD', { card: cardData });
+        });
+
+        // 各種UIボタンの操作 (LobbyManager等に委譲されている場合はそちらで処理)
+        // 必要に応じてここに直接的なネットワーク送信を追加可能
+    }
+
+    /**
+     * 手牌のクリックによる打牌処理のバインド
+     */
+    bindDiscardAction() {
+        const canvas = document.getElementById('game-canvas');
+        if (!canvas || !this.gameState) return;
+
+        const myData = this.gameState.players.find(p => p.id === this.myId);
+        if (!myData) return;
+
+        // UIモジュールを使用して牌のクリックインデックスを取得
+        this.ui.bindCanvasClick(canvas, myData.hand.length, (tileIndex) => {
+            const tile = myData.hand[tileIndex];
+            if (tile) {
+                this.network.send('ACTION', {
+                    actionType: 'DISCARD',
+                    payload: { tile: tile }
+                });
+            }
+        });
+    }
+}
+
+/**
+ * 起動処理
+ */
+window.onload = () => {
+    const app = new ClientApp();
+    app.start();
+};

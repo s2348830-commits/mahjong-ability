@@ -1,93 +1,99 @@
-// public/network.js (修正版)
+/**
+ * public/network.js
+ * WebSocket通信レイヤー: サーバーとの接続管理、メッセージ送受信、イベント分配を担当
+ */
 (function(global) {
     'use strict';
 
-    class NetworkManager {
+    class Network {
         constructor() {
             this.socket = null;
-            this.messageQueue = [];
-            this.requestCounter = 0;
-            this.callbacks = new Map(); // requestIDに紐づくコールバック
-            this.eventListeners = new Map(); // 追加: サーバーイベントのリッスン用
+            this.listeners = {}; // イベント名とコールバックのマップ
+            this.url = '';
         }
 
+        /**
+         * サーバーとの WebSocket 接続を開始する
+         */
         connect() {
+            // 現在のプロトコルに合わせてwsまたはwssを選択
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}`;
-            
-            this.socket = new WebSocket(wsUrl);
+            this.url = `${protocol}//${window.location.host}`;
+
+            this.socket = new WebSocket(this.url);
 
             this.socket.onopen = () => {
-                console.log('Connected to server');
-                this.flushQueue();
+                console.log('[Network] Connected to server.');
+                this.emit('connected', null);
             };
 
             this.socket.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                this.handleMessage(data);
+                try {
+                    const message = JSON.parse(event.data);
+                    // サーバーからのメッセージ形式 { type, payload } または { type, data } に対応
+                    const type = message.type;
+                    const data = message.payload || message.data || null;
+
+                    console.log(`[Network] Received: ${type}`, data);
+                    this.emit(type, data);
+                } catch (e) {
+                    console.error('[Network] Failed to parse message:', e);
+                }
             };
 
             this.socket.onclose = () => {
-                console.log('Disconnected. Attempting to reconnect...');
-                setTimeout(() => this.connect(), 3000); // 再接続処理
+                console.warn('[Network] Disconnected from server.');
+                this.emit('disconnected', null);
+            };
+
+            this.socket.onerror = (error) => {
+                console.error('[Network] WebSocket error:', error);
+                this.emit('error', error);
             };
         }
 
-        sendRequest(type, payload) {
-            return new Promise((resolve, reject) => {
-                const requestID = `req_${++this.requestCounter}`;
-                const message = { type, requestID, payload };
-
-                this.callbacks.set(requestID, { resolve, reject });
-
-                if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-                    this.socket.send(JSON.stringify(message));
-                } else {
-                    this.messageQueue.push(message);
-                }
-            });
-        }
-
-        // 追加: イベントリスナーを登録するメソッド
-        onEvent(eventType, callback) {
-            this.eventListeners.set(eventType, callback);
-        }
-
-        handleMessage(data) {
-            // ACK/Responseの処理 (自分が送ったリクエストへの返事)
-            if (data.requestID && this.callbacks.has(data.requestID)) {
-                const callback = this.callbacks.get(data.requestID);
-                if (data.status === 'success') {
-                    callback.resolve(data.payload);
-                } else {
-                    callback.reject(data.payload);
-                }
-                this.callbacks.delete(data.requestID);
-                return;
-            }
-
-            // サーバーからのイベント（状態更新など）の処理
-            if (data.type && data.type.startsWith('EVENT_')) {
-                // ACKを返す（サーバー側に受け取ったことを伝える）
-                if (data.eventID) {
-                    this.socket.send(JSON.stringify({ type: 'EVENT_ACK', eventID: data.eventID }));
-                }
-
-                // 登録されたコールバック（lobby.jsやclient.js）にデータを渡す
-                if (this.eventListeners.has(data.type)) {
-                    this.eventListeners.get(data.type)(data.payload);
-                }
+        /**
+         * サーバーへメッセージを送信する
+         * @param {string} type - JOIN_ROOM, DISCARD_TILE, RON など
+         * @param {Object} data - 送信するペイロード
+         */
+        send(type, data = {}) {
+            if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+                const message = JSON.stringify({
+                    type: type,
+                    payload: data, // server/server.js の期待する形式
+                    requestID: `req_${Date.now()}` // サーバー側のリクエスト管理用
+                });
+                this.socket.send(message);
+                console.log(`[Network] Sent: ${type}`, data);
+            } else {
+                console.error('[Network] Cannot send message: Socket is not open.');
             }
         }
 
-        flushQueue() {
-            while (this.messageQueue.length > 0) {
-                const msg = this.messageQueue.shift();
-                this.socket.send(JSON.stringify(msg));
+        /**
+         * イベントリスナーを登録する
+         * @param {string} type - ROOM_UPDATE, GAME_STATE などの受信タイプ
+         * @param {Function} callback - 受信時に実行する関数
+         */
+        on(type, callback) {
+            if (!this.listeners[type]) {
+                this.listeners[type] = [];
+            }
+            this.listeners[type].push(callback);
+        }
+
+        /**
+         * 登録されたリスナーにイベントを分配する (内部用)
+         */
+        emit(type, data) {
+            if (this.listeners[type]) {
+                this.listeners[type].forEach(callback => callback(data));
             }
         }
     }
 
-    global.NetworkManager = NetworkManager;
+    // client.js から利用できるようにグローバルに公開
+    global.Network = Network;
 
 })(typeof window !== 'undefined' ? window : this);
