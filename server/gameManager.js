@@ -1,276 +1,149 @@
-/**
- * server/gameManager.js
- * 局の進行管理、アクション優先順位、能力カード連携を担うクラス
- */
-const MahjongEngine = require('./mahjongEngine');
-const CardEngine = require('./cardEngine');
-
 class GameManager {
-    /**
-     * @param {Object} room - RoomManagerから渡される部屋情報
-     * @param {Object} roomManager - RoomManagerのインスタンス
-     */
-    constructor(room, roomManager) {
-        this.room = room;
-        this.roomManager = roomManager;
-        this.engine = new MahjongEngine();
-        this.cardEngine = new CardEngine(this);
+    constructor(roomId, engine, broadcastFn, onStateChange, onNextTurn) {
+        this.roomId = roomId;
+        this.engine = engine;
+        this.broadcast = broadcastFn;       // 部屋の全員に送信する関数
+        this.onStateChange = onStateChange; // 状態同期用コールバック (鳴き成立時など)
+        this.onNextTurn = onNextTurn;       // 次のターンのツモ用コールバック (誰も鳴かなかった時)
 
-        // ゲームの内部状態
-        this.gameState = {
-            status: 'INIT',      // INIT, PLAYING, WAIT_ACTION, ROUND_END
-            round: 1,            // 東1局=1, 東2局=2...
-            dealerIndex: 0,      // 親のインデックス (0-3)
-            currentTurn: null,   // 現在の手番プレイヤーID
-            lastDiscard: null,   // { playerId, tile }
-            players: [],         // プレイヤーごとの動的データ
-            tilesLeft: 0
+        // アクション待ち受け用の状態管理
+        this.actionWindow = {
+            active: false,
+            timer: null,
+            pendingActions: [],
+            discardedTile: null,
+            discarderId: null
         };
 
-        // 同時アクション処理用のキュー
-        this.actionQueue = [];
-        this.actionTimer = null;
-
-        this.initGame();
+        // アクションの優先順位定義（数字が小さいほど強い）
+        // 能力カード > ロン > ポン/カン > チー の要件を満たします
+        this.priorityMap = {
+            'ABILITY': 1,
+            'RON': 2,
+            'PON': 3,
+            'KAN': 3,
+            'CHII': 4,
+            'PASS': 99
+        };
     }
 
-    /**
-     * ゲーム全体の初期化 (プレイヤー状態の生成)
-     */
-    initGame() {
-        this.gameState.players = this.room.players.map((p, index) => ({
-            id: p.id,
-            name: p.name,
-            score: 25000,
-            seat: index,         // 0:東, 1:南, 2:西, 3:北
-            hand: [],
-            melds: [],           // 副露面子
-            discards: [],        // 捨て牌
-            isRiichi: false,
-            cards: p.equippedCards || [] // 持ち込んだ能力カード
-        }));
+    // プレイヤーが牌を捨てた時に呼ばれる
+    handleDiscard(playerId, tileIndex) {
+        // engine側で捨て牌処理を行い、捨てられた牌を取得
+        const result = this.engine.discardTile(playerId, tileIndex);
+        if (!result) return false;
 
-        // CardEngineにカードを登録
-        this.gameState.players.forEach(p => {
-            p.cards.forEach(card => this.cardEngine.registerCard(p.id, card));
+        const discardedTile = result.tile;
+        this.broadcast({
+            type: 'TILE_DISCARDED',
+            playerId: playerId,
+            tile: discardedTile
         });
 
-        this.startRound();
+        // 打牌に対するリアクション（鳴き・ロン・能力）の待ち受けを開始
+        this.startActionWindow(playerId, discardedTile);
+        return true;
     }
 
-    /**
-     * 局の開始 (配牌と初期トリガー)
-     */
-    startRound() {
-        this.engine.initializeWall(); // 136牌生成・山生成・シャッフル
+    startActionWindow(discarderId, discardedTile) {
+        this.actionWindow = {
+            active: true,
+            pendingActions: [],
+            discardedTile: discardedTile,
+            discarderId: discarderId,
+            timer: null
+        };
+
+        // 5秒間、各プレイヤーからのリアクションを待つ
+        const ACTION_TIMEOUT_MS = 5000;
         
-        // 配牌 (親14枚、子13枚)
-        const hands = this.engine.distributeTiles(4, this.gameState.dealerIndex);
-        this.gameState.players.forEach((p, i) => {
-            p.hand = hands[i];
-        });
-
-        this.gameState.status = 'PLAYING';
-        this.gameState.currentTurn = this.gameState.players[this.gameState.dealerIndex].id;
-        this.gameState.tilesLeft = this.engine.tilesLeft;
-
-        // イベントフック: 局開始
-        this.gameState.players.forEach(p => {
-            this.cardEngine.trigger('ROUND_START', { playerId: p.id });
-        });
-
-        this.broadcastGameState();
+        this.actionWindow.timer = setTimeout(() => {
+            this.resolveActions();
+        }, ACTION_TIMEOUT_MS);
     }
 
-    /**
-     * クライアントからのアクション入力
-     */
-    handleAction(playerId, actionType, payload) {
-        const player = this.gameState.players.find(p => p.id === playerId);
-        if (!player) return;
+    // クライアントから「ポン」「ロン」「能力発動」「パス」などの要求を受け取る
+    registerAction(playerId, actionType, payload = {}) {
+        if (!this.actionWindow.active) return;
+        if (playerId === this.actionWindow.discarderId) return; // 捨てた本人はリアクション不可
 
-        // 1. 自分の手番のアクション (打牌、ツモ和了、能力使用)
-        if (this.gameState.status === 'PLAYING' && this.gameState.currentTurn === playerId) {
-            if (actionType === 'DISCARD') {
-                this.processDiscard(playerId, payload.tile);
-            } else if (actionType === 'TSUMO') {
-                this.processWin(playerId, 'TSUMO');
-            }
-        } 
-        // 2. 他人の打牌に対するアクション (ロン、ポン、チー、カン)
-        else if (this.gameState.status === 'WAIT_ACTION') {
-            this.queueAction(playerId, actionType, payload);
+        // 既にアクションを登録済みなら上書き（最後に押したボタンを優先するなど）
+        const existingIndex = this.actionWindow.pendingActions.findIndex(a => a.playerId === playerId);
+        const actionData = { playerId, actionType, payload, priority: this.priorityMap[actionType] || 99 };
+
+        if (existingIndex >= 0) {
+            this.actionWindow.pendingActions[existingIndex] = actionData;
+        } else {
+            this.actionWindow.pendingActions.push(actionData);
         }
-    }
 
-    /**
-     * 打牌処理
-     */
-    processDiscard(playerId, tile) {
-        const player = this.gameState.players.find(p => p.id === playerId);
-        const idx = player.hand.indexOf(tile);
-        if (idx === -1) return;
-
-        // 手牌から削除し河に追加
-        player.hand.splice(idx, 1);
-        player.discards.push({ tile, isRiichi: player.isRiichi });
-        this.gameState.lastDiscard = { playerId, tile };
-
-        // イベントフック: 打牌
-        this.cardEngine.trigger('ON_DISCARD', { playerId, tile });
-
-        // 全プレイヤーの鳴き・ロン判定
-        this.gameState.status = 'WAIT_ACTION';
-        this.actionQueue = [];
-        this.broadcastGameState();
-
-        // 5秒間アクションを待機し、その後優先順位に従って解決
-        this.actionTimer = setTimeout(() => this.resolveActions(), 5000);
-    }
-
-    /**
-     * アクションをキューに追加 (優先順位判定用)
-     */
-    queueAction(playerId, actionType, payload) {
-        // 重複削除
-        this.actionQueue = this.actionQueue.filter(a => a.playerId !== playerId);
-        this.actionQueue.push({ playerId, actionType, payload });
-
-        // 全員(捨てた人以外)から返答が来たら即解決
-        if (this.actionQueue.length === this.gameState.players.length - 1) {
-            clearTimeout(this.actionTimer);
+        // 全員（捨てた人以外の3人）が何かしらのアクション（パス含む）を返したら、
+        // タイマーを待たずに即時解決する
+        if (this.actionWindow.pendingActions.length === 3) {
+            clearTimeout(this.actionWindow.timer);
             this.resolveActions();
         }
     }
 
-    /**
-     * 優先順位に基づいた同時アクションの解決
-     */
+    // 集まったアクションを評価し、次に起こるべき事象を決定する
     resolveActions() {
-        // 優先順位: 能力カード(1) > ロン(2) > ポン/カン(3) > チー(4) > SKIP(99)
-        const priorityMap = { 'ABILITY': 1, 'RON': 2, 'PON': 3, 'KAN': 3, 'CHI': 4, 'SKIP': 99 };
-        
-        const sorted = this.actionQueue
-            .filter(a => a.actionType !== 'SKIP')
-            .sort((a, b) => priorityMap[a.actionType] - priorityMap[b.actionType]);
+        this.actionWindow.active = false;
+        const actions = this.actionWindow.pendingActions;
 
-        if (sorted.length > 0) {
-            const top = sorted[0];
-            this.executeAction(top.playerId, top.actionType, top.payload);
-        } else {
-            this.nextTurn();
-        }
-    }
+        // パス以外のアクションを抽出し、優先順位（priority）の昇順でソート
+        const validActions = actions
+            .filter(a => a.actionType !== 'PASS')
+            .sort((a, b) => a.priority - b.priority);
 
-    /**
-     * アクションの実行
-     */
-    executeAction(playerId, type, payload) {
-        const player = this.gameState.players.find(p => p.id === playerId);
-        
-        switch (type) {
-            case 'RON':
-                this.processWin(playerId, 'RON');
-                break;
-            case 'PON':
-                // エンジンの判定を挟んで副露処理
-                if (this.engine.canPon(player.hand, this.gameState.lastDiscard.tile)) {
-                    this.performMeld(player, 'PON');
-                }
-                break;
-            case 'CHI':
-                if (this.engine.canChi(player.hand, this.gameState.lastDiscard.tile)) {
-                    this.performMeld(player, 'CHI');
-                }
-                break;
-            // 他の鳴き処理も同様
-        }
-    }
-
-    /**
-     * 次の手番へ移動 (ツモ処理含む)
-     */
-    nextTurn() {
-        if (this.engine.isRyuukyoku()) {
-            this.processDraw();
+        if (validActions.length === 0) {
+            // 誰も何も鳴かなかった場合、通常通り次の人の手番へ移行し、ツモ処理を呼ぶ
+            this.engine.nextTurn();
+            this.onNextTurn(); 
             return;
         }
 
-        const currentIdx = this.gameState.players.findIndex(p => p.id === this.gameState.currentTurn);
-        const nextIdx = (currentIdx + 1) % 4;
-        const nextPlayer = this.gameState.players[nextIdx];
+        // 最も優先度の高いアクションを実行
+        const winningAction = validActions[0];
 
-        this.gameState.currentTurn = nextPlayer.id;
-        this.gameState.status = 'PLAYING';
-
-        // ツモ
-        const tile = this.engine.drawTile();
-        nextPlayer.hand.push(tile);
-        this.gameState.tilesLeft = this.engine.tilesLeft;
-
-        // イベントフック: 手番開始 / ツモ
-        this.cardEngine.trigger('TURN_START', { playerId: nextPlayer.id });
-        this.cardEngine.trigger('ON_DRAW', { playerId: nextPlayer.id, tile });
-
-        this.broadcastGameState();
+        // ダブロン（2人が同時にロン）の処理など、同順位が複数いる場合の拡張もここで可能
+        this.executeWinningAction(winningAction);
     }
 
-    /**
-     * 和了処理 (ロン/ツモ)
-     */
-    processWin(playerId, type) {
-        this.gameState.status = 'ROUND_END';
-        const player = this.gameState.players.find(p => p.id === playerId);
-        
-        // エンジンによる役判定の呼び出し
-        const lastTile = type === 'RON' ? this.gameState.lastDiscard.tile : player.hand[player.hand.length - 1];
-        const yaku = this.engine.calculateYaku(player.hand, player.melds, { isRiichi: player.isRiichi });
+    executeWinningAction(action) {
+        const { playerId, actionType, payload } = action;
 
-        this.broadcastGameEvent({
-            type: 'WIN',
-            playerId,
-            winType: type,
-            yaku: yaku
+        // アクションが成立したことを全員に通知
+        this.broadcast({
+            type: 'ACTION_RESOLVED',
+            playerId: playerId,
+            actionType: actionType,
+            tile: this.actionWindow.discardedTile
         });
-    }
 
-    /**
-     * 流局処理
-     */
-    processDraw() {
-        this.gameState.status = 'ROUND_END';
-        this.broadcastGameEvent({ type: 'RYUUKYOKU' });
-    }
-
-    /**
-     * 全プレイヤーに盤面状態を送信 (他人の手牌は秘匿)
-     */
-    broadcastGameState() {
-        this.gameState.players.forEach(p => {
-            const safePlayers = this.gameState.players.map(other => ({
-                id: other.id,
-                name: other.name,
-                score: other.score,
-                hand: (other.id === p.id) ? other.hand : new Array(other.hand.length).fill('unknown'),
-                melds: other.melds,
-                discards: other.discards,
-                isRiichi: other.isRiichi
-            }));
-
-            const payload = { ...this.gameState, players: safePlayers, dora: this.engine.doraIndicators };
-            this.room.players.find(rp => rp.id === p.id).ws.send(JSON.stringify({
-                type: 'EVENT_GAME_STATE_UPDATE',
-                payload
-            }));
-        });
-    }
-
-    /**
-     * 特殊イベントのブロードキャスト
-     */
-    broadcastGameEvent(payload) {
-        const data = JSON.stringify({ type: 'EVENT_GAME_ANNOUNCEMENT', payload });
-        this.room.players.forEach(p => p.ws.readyState === 1 && p.ws.send(data));
+        switch (actionType) {
+            case 'ABILITY':
+                // 後で実装する能力カードエンジンに処理を委譲
+                // this.cardEngine.execute(payload.cardId, playerId, this.actionWindow.discardedTile);
+                break;
+            case 'RON':
+                this.engine.roundState = 'finished';
+                this.broadcast({ type: 'GAME_OVER', winner: playerId, reason: 'RON' });
+                break;
+            case 'PON':
+            case 'CHII':
+            case 'KAN':
+                // 鳴き処理（payload.consumeTiles には消費する手牌の文字列配列が入る想定）
+                this.engine.executeMeld(playerId, actionType, this.actionWindow.discardedTile, payload.consumeTiles || []);
+                
+                // 鳴いた人の手番になる
+                this.engine.setTurn(playerId);
+                
+                // 盤面が変化したため、全員に最新状態を再同期する
+                this.onStateChange();
+                
+                // ※鳴いた後はツモらずにそのまま打牌を待つ状態になるため、onNextTurn()は呼ばない
+                break;
+        }
     }
 }
 

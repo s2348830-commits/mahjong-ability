@@ -1,13 +1,15 @@
 {
   "name": "mahjong-ability",
   "version": "1.0.0",
-  "description": "Online Mahjong with custom ability cards",
+  "description": "Online Mahjong game with custom ability cards",
   "main": "server/server.js",
   "scripts": {
-    "start": "node server/server.js"
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
+    "sqlite3": "^5.1.7",
     "ws": "^8.16.0"
   }
 }

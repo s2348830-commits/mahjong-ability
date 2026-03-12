@@ -1,185 +1,115 @@
-// server/roomManager.js
-const crypto = require('crypto');
+const MahjongEngine = require('./mahjongEngine');
+const GameManager = require('./gameManager');
 
 class RoomManager {
     constructor() {
         this.rooms = new Map();
-        this.playerRoomMap = new Map();
     }
 
-    generateId() {
-        return crypto.randomBytes(8).toString('hex');
-    }
-
-    createRoom(ws, settings) {
-        const roomId = this.generateId();
-        const room = {
+    createRoom(hostWs, settings) {
+        const roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
+        this.rooms.set(roomId, {
             id: roomId,
-            name: settings.name || "名称未設定の部屋",
-            hostId: ws.id,
-            maxPlayers: settings.maxPlayers || 4,
-            cardSettings: {
-                count: settings.cardCount || 5,
-                timing: settings.cardTiming || 'game'
-            },
-            players: [],
-            status: 'WAITING'
-        };
-
-        this.rooms.set(roomId, room);
-        this.joinRoom(ws, roomId);
-        
-        return room;
+            players: [hostWs],
+            settings: settings,
+            engine: new MahjongEngine(),
+            gameManager: null,
+            status: 'waiting'
+        });
+        return roomId;
     }
 
     joinRoom(ws, roomId) {
         const room = this.rooms.get(roomId);
-        
-        if (!room) throw new Error('部屋が見つかりません。');
-        if (room.status !== 'WAITING') throw new Error('既にゲームが開始されています。');
-        if (room.players.length >= room.maxPlayers) throw new Error('部屋は満員です。');
-        if (this.playerRoomMap.has(ws.id)) throw new Error('既に別の部屋に参加しています。');
-
-        const newPlayer = {
-            id: ws.id,
-            ws: ws,
-            name: `Player_${ws.id.substring(0, 4)}`,
-            isReady: false,
-            equippedCards: [] // 【追加】装備中の能力カードを保存する配列
-        };
-
-        room.players.push(newPlayer);
-        this.playerRoomMap.set(ws.id, roomId);
-
-        this.broadcastRoomState(roomId);
-        return room;
-    }
-
-    setReady(ws, isReady) {
-        const roomId = this.playerRoomMap.get(ws.id);
-        if (!roomId) throw new Error('部屋に参加していません。');
-
-        const room = this.rooms.get(roomId);
-        const player = room.players.find(p => p.id === ws.id);
-        
-        if (player) {
-            player.isReady = isReady;
-            this.broadcastRoomState(roomId);
+        if (room && room.status === 'waiting' && room.players.length < 4) {
+            room.players.push(ws);
+            this.broadcast(roomId, { type: 'PLAYER_JOINED', count: room.players.length });
+            
+            // 4人揃ったら自動でゲーム開始（テスト用に減らしてもOK）
+            if (room.players.length === 4) {
+                this.startGame(roomId);
+            }
         }
     }
 
-    // 【追加】プレイヤーに能力カードを装備させる
-    equipCard(wsId, cardData) {
-        const roomId = this.playerRoomMap.get(wsId);
-        if (!roomId) return; // 部屋にいない場合は無視（今回はロビー全体での永続保存ではなく部屋単位の保存）
-
+    startGame(roomId) {
         const room = this.rooms.get(roomId);
-        const player = room.players.find(p => p.id === wsId);
+        room.status = 'playing';
+        const playerIds = room.players.map(p => p.id);
         
-        if (player) {
-            // 現在は1枚だけ装備する仕様（追加する場合は push にする）
-            player.equippedCards = [cardData];
-            this.broadcastRoomState(roomId);
-            console.log(`Player ${wsId} equipped card: ${cardData.name}`);
+        room.engine.initializeGame(playerIds);
+        
+        // GameManagerの初期化（アクション解決後のコールバックを渡す）
+        room.gameManager = new GameManager(roomId, room.engine, 
+            (msg) => this.broadcast(roomId, msg),
+            () => this.syncAllPlayersState(room), // 状態が変わったら全員に最新状態を同期
+            () => this.executeDraw(room)          // 次のターンへ進む際のツモ処理
+        );
+
+        // 初期状態を各プレイヤーに送信
+        this.syncAllPlayersState(room);
+
+        // 起家（最初のプレイヤー）のツモ処理を実行
+        this.executeDraw(room);
+    }
+
+    // 最新の盤面・手牌状態を各プレイヤーに同期する（ズレ防止の要）
+    syncAllPlayersState(room) {
+        room.players.forEach(ws => {
+            ws.send(JSON.stringify({
+                type: 'SYNC_STATE',
+                state: room.engine.getPlayerState(ws.id)
+            }));
+        });
+    }
+
+    // ツモ処理
+    async executeDraw(room) {
+        const currentPlayerId = room.engine.getCurrentPlayer();
+        const result = await room.engine.drawTile(currentPlayerId);
+
+        if (result && result.type === 'draw') {
+            // ツモった牌は本人のみに送信
+            const ws = room.players.find(p => p.id === currentPlayerId);
+            if (ws) ws.send(JSON.stringify({ type: 'TILE_DRAWN', tile: result.tile }));
+            
+            this.broadcast(room.id, { type: 'TURN_CHANGED', currentTurn: currentPlayerId });
+            this.syncAllPlayersState(room); // 残り牌などの情報更新のため同期
+        } else if (result && result.type === 'ryukyoku') {
+            this.broadcast(room.id, { type: 'GAME_OVER', reason: 'RYUKYOKU' });
         }
     }
 
-    startGame(ws) {
-        const roomId = this.playerRoomMap.get(ws.id);
-        if (!roomId) throw new Error('部屋に参加していません。');
-
-        const room = this.rooms.get(roomId);
-        
-        if (room.hostId !== ws.id) throw new Error('ホストのみがゲームを開始できます。');
-        if (room.players.length < 2) throw new Error('プレイヤーが足りません。');
-        
-        const allReady = room.players.every(p => p.isReady || p.id === room.hostId);
-        if (!allReady) throw new Error('全員が準備完了していません。');
-
-        room.status = 'PLAYING';
-        this.broadcastRoomState(roomId);
-        
-        console.log(`Room ${roomId} started the game!`);
-        return room;
-    }
-
-    leaveRoom(wsId) {
-        const roomId = this.playerRoomMap.get(wsId);
-        if (!roomId) return;
-
-        const room = this.rooms.get(roomId);
-        room.players = room.players.filter(p => p.id !== wsId);
-        this.playerRoomMap.delete(wsId);
-
-        if (room.players.length === 0) {
-            this.rooms.delete(roomId);
-            console.log(`Room ${roomId} was destroyed.`);
-        } else {
-            if (room.hostId === wsId) {
-                room.hostId = room.players[0].id;
+    // クライアントからのアクション（打牌、鳴きなど）のルーティング
+    handleGameAction(playerId, payload) {
+        // プレイヤーが所属している部屋を探す
+        let targetRoom = null;
+        for (const room of this.rooms.values()) {
+            if (room.players.some(p => p.id === playerId)) {
+                targetRoom = room;
+                break;
             }
-            this.broadcastRoomState(roomId);
+        }
+        if (!targetRoom || targetRoom.status !== 'playing') return;
+
+        const gm = targetRoom.gameManager;
+
+        if (payload.action === 'DISCARD') {
+            // 打牌処理
+            gm.handleDiscard(playerId, payload.tileIndex);
+        } else if (payload.action === 'REACTION') {
+            // ポン・チー・ロン・パスの処理
+            gm.registerAction(playerId, payload.actionType, payload.payload);
         }
     }
 
-    getLobbyRooms() {
-        const openRooms = [];
-        this.rooms.forEach(room => {
-            if (room.status === 'WAITING') {
-                openRooms.push({
-                    id: room.id,
-                    name: room.name,
-                    playersCount: room.players.length,
-                    maxPlayers: room.maxPlayers,
-                    cardSettings: room.cardSettings
-                });
-            }
-        });
-        return openRooms;
-    }
-
-    broadcastRoomState(roomId) {
+    broadcast(roomId, message) {
         const room = this.rooms.get(roomId);
-        if (!room) return;
-
-        const safeRoomData = {
-            id: room.id,
-            name: room.name,
-            hostId: room.hostId,
-            maxPlayers: room.maxPlayers,
-            cardSettings: room.cardSettings,
-            status: room.status,
-            players: room.players.map(p => ({
-                id: p.id,
-                name: p.name,
-                isReady: p.isReady,
-                hasCard: p.equippedCards.length > 0 // 他人には「カードを装備しているか」だけ教える（チート対策）
-            }))
-        };
-
-        const eventPayload = JSON.stringify({
-            type: 'EVENT_ROOM_STATE_SYNC',
-            eventID: `evt_${this.generateId()}`,
-            payload: safeRoomData
-        });
-
-        room.players.forEach(player => {
-            if (player.ws && player.ws.readyState === 1) {
-                player.ws.send(eventPayload);
-            }
-        });
-    }
-
-    handleDisconnect(wsId) {
-        const roomId = this.playerRoomMap.get(wsId);
-        if (!roomId) return;
-
-        const room = this.rooms.get(roomId);
-        if (room.status === 'PLAYING') {
-            console.log(`Player ${wsId} disconnected during a game. Starting 60s timer.`);
-            // TODO: スマホの裏画面移行による一時的な切断への対応として、AI交代までの猶予（60秒）をカウントする
-        } else {
-            this.leaveRoom(wsId);
+        if (room) {
+            const data = JSON.stringify(message);
+            room.players.forEach(ws => {
+                if (ws.readyState === 1) ws.send(data);
+            });
         }
     }
 }

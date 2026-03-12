@@ -2,62 +2,41 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>能力カード麻雀 (Mahjong Ability)</title>
-    
+    <title>能力・麻雀 (Mahjong Ability)</title>
     <link rel="stylesheet" href="style.css">
-
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mobile-drag-drop@2.3.0-rc.2/default.css">
-    <script src="https://cdn.jsdelivr.net/npm/mobile-drag-drop@2.3.0-rc.2/index.min.js"></script>
 </head>
 <body>
+    <div id="lobby-screen">
+        <h1>Mahjong Ability</h1>
+        <button id="btn-create-room">部屋を作成</button>
+        <button id="btn-join-room">部屋に参加</button>
+    </div>
 
-    <div id="lobby-view" class="view active">
-        <h1>ロビー</h1>
-        <div style="display: flex; gap: 10px;">
-            <button id="btn-refresh-lobby" style="flex: 1;">更新</button>
-            <button id="btn-create-room" style="flex: 2;">部屋を作成</button>
+    <div id="game-screen" style="display: none;">
+        <div id="game-info">
+            <span>残り牌: <span id="tiles-left">--</span></span>
+            <span>ドラ: <span id="dora-indicators"></span></span>
         </div>
-        <button id="btn-open-editor">能力カード作成ツールを開く</button>
         
-        <ul id="lobby-room-list"></ul>
+        <div id="game-board">
+            <div id="my-discards" class="discard-area"></div>
+        </div>
 
-        <div id="card-editor-modal">
-            <button id="btn-close-editor" style="float:right;">閉じる</button>
-            <h2>能力カード作成</h2>
-            <div id="card-editor-container"></div>
+        <div id="my-hand-container">
+            <div id="my-hand" class="hand-area"></div>
+        </div>
+        
+        <div id="action-panel" style="display: none;">
+            <button id="btn-tsumo">ツモ</button>
+            <button id="btn-ron">ロン</button>
+            <button id="btn-pon">ポン</button>
+            <button id="btn-pass">パス</button>
         </div>
     </div>
-
-    <div id="room-view" class="view">
-        <h1 id="room-title">部屋</h1>
-        <ul id="room-player-list"></ul>
-        <div style="display: flex; flex-direction: column; margin-top: 15px;">
-            <button id="btn-ready">準備完了 / 取消</button>
-            <button id="btn-start-game" style="display:none;">ゲーム開始</button>
-            <button id="btn-leave-room">退出</button>
-        </div>
-    </div>
-
-    <div id="game-view" class="view">
-        <div id="game-container">
-            <canvas id="game-canvas" width="800" height="450"></canvas>
-            <div style="margin-top: 15px;">
-                <button id="btn-skip-action" style="display:none;">スキップ (パス)</button>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        MobileDragDrop.polyfill({ dragImageTranslateOverride: MobileDragDrop.scrollBehaviourDragImageTranslateOverride });
-        window.addEventListener('touchmove', function() {}, {passive: false});
-    </script>
 
     <script src="network.js"></script>
     <script src="mahjongRenderer.js"></script>
-    <script src="cardEditor.js"></script>
     <script src="ui.js"></script>
-    <script src="lobby.js"></script>
-    <script type="module" src="client.js"></script>
+    <script src="client.js"></script>
 </body>
 </html>
