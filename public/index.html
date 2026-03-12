@@ -2,56 +2,35 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>能力・麻雀 (Mahjong Ability)</title>
+    <title>Online Mahjong</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="lobby-screen">
-        <h1>Mahjong Ability ロビー</h1>
-        
-        <div style="background: rgba(0,0,0,0.2); padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-            <h3>部屋を作成する</h3>
-            <input type="text" id="input-room-name" placeholder="部屋名 (必須)" style="padding: 5px;">
-            <input type="password" id="input-room-password" placeholder="パスワード (任意)" style="padding: 5px;">
-            <button id="btn-create-room">作成</button>
+    <div id="app">
+        <div id="home-screen" class="screen">
+            <h1>オンライン麻雀ロビー</h1>
+            <button onclick="createRoom()">部屋を作成 (4人)</button>
+            <button onclick="searchRooms()">部屋を検索</button>
+            <ul id="room-list"></ul>
         </div>
 
-        <div style="background: rgba(0,0,0,0.2); padding: 20px; border-radius: 8px;">
-            <h3>部屋一覧 <button id="btn-refresh-rooms" style="font-size: 12px;">更新</button></h3>
-            <ul id="room-list" style="list-style: none; padding: 0;">
-                </ul>
+        <div id="room-screen" class="screen" style="display:none;">
+            <h2>部屋待機室</h2>
+            <ul id="player-list"></ul>
+            <button onclick="toggleReady()">準備完了 / 取消</button>
+        </div>
+
+        <div id="game-screen" class="screen" style="display:none;">
+            <h2>対局中</h2>
+            <div id="game-info"></div>
+            <div id="table">
+                <div id="discards"></div>
+            </div>
+            <div id="my-hand" class="hand"></div>
+            <div id="actions">
+                </div>
         </div>
     </div>
-
-    <div id="room-screen" style="display: none; text-align: center; margin-top: 50px;">
-        <h2>待機部屋: <span id="display-room-name">---</span> (ID: <span id="display-room-id">---</span>)</h2>
-        <ul id="player-list" style="list-style: none; padding: 0;"></ul>
-        <button id="btn-ready">準備完了</button>
-        <button id="btn-start-game" style="display: none;">ゲーム開始 (ホストのみ)</button>
-    </div>
-
-    <div id="game-screen" style="display: none;">
-        <div id="game-info">
-            <span>残り牌: <span id="tiles-left">--</span></span>
-            <span>ドラ: <span id="dora-indicators"></span></span>
-        </div>
-        <div id="game-board">
-            <div id="my-discards" class="discard-area"></div>
-        </div>
-        <div id="my-hand-container">
-            <div id="my-hand" class="hand-area"></div>
-        </div>
-        <div id="action-panel" style="display: none;">
-            <button id="btn-ron">ロン</button>
-            <button id="btn-pon">ポン</button>
-            <button id="btn-pass">パス</button>
-        </div>
-    </div>
-
-    <script src="network.js"></script>
-    <script src="mahjongRenderer.js"></script>
-    <script src="ui.js"></script>
-    <script src="room.js"></script>
-    <script src="client.js"></script>
+    <script src="app.js"></script>
 </body>
 </html>
