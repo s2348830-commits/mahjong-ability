@@ -7,7 +7,9 @@ class Network {
     }
 
     connect() {
-        this.ws = new WebSocket(`ws://${window.location.host}`);
+        // 現在のページのプロトコルを確認し、ws と wss を自動で切り替える
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        this.ws = new WebSocket(`${protocol}//${window.location.host}`);
         
         this.ws.onopen = () => {
             console.log('Connected to server');
@@ -45,13 +47,11 @@ class Network {
     }
 
     handleMessage(data) {
-        // コールバックの解決 (ACKの処理)
         if (data.reqId && this.callbacks.has(data.reqId)) {
             this.callbacks.get(data.reqId)(data);
             this.callbacks.delete(data.reqId);
         }
 
-        // 状態に応じたイベント発火（client.jsやui.jsでリッスンする）
         document.dispatchEvent(new CustomEvent('serverMessage', { detail: data }));
     }
 }
